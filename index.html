@@ -27,7 +27,24 @@
       align-items: center;
       min-height: 100vh;
       overflow: hidden;
-      touch-action: manipulation;
+      touch-action: none;
+    }
+
+    #console-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 440px;
+      height: 100vh;
+      max-height: 880px;
+      background: linear-gradient(145deg, #2b3952, #182236);
+      border: 4px solid #475a7c;
+      border-radius: 28px;
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.7), inset 0 2px 4px rgba(255,255,255,0.15);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 14px;
+      touch-action: none;
     }
 
     #console-wrapper {
@@ -147,6 +164,7 @@
       position: relative;
       width: 130px;
       height: 130px;
+      touch-action: none;
     }
 
     .d-btn {
@@ -161,6 +179,8 @@
       font-size: 14px;
       color: #839bbd;
       transition: transform 0.05s, box-shadow 0.05s;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .d-btn:active, .d-btn.active {
@@ -238,6 +258,8 @@
       justify-content: center;
       align-items: center;
       transition: transform 0.05s, box-shadow 0.05s;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .circle-btn:active, .circle-btn.active {
@@ -342,9 +364,10 @@ const AudioFX = {
     setTimeout(() => this.playTone(880, 'square', 0.08, 0.1), 50);
   },
   petalPickup() {
-    this.playTone(523.25, 'triangle', 0.08, 0.15); // C5
-    setTimeout(() => this.playTone(659.25, 'triangle', 0.08, 0.15), 80); // E5
-    setTimeout(() => this.playTone(783.99, 'triangle', 0.12, 0.15), 160); // G5
+    this.playTone(587.33, 'triangle', 0.1, 0.2); // D5
+    setTimeout(() => this.playTone(739.99, 'triangle', 0.12, 0.2), 90); // F#5
+    setTimeout(() => this.playTone(880.00, 'triangle', 0.16, 0.25), 180); // A5
+    setTimeout(() => this.playTone(1174.66, 'sine', 0.25, 0.2), 270); // D6
   },
   elephantTrumpet() {
     this.playTone(220, 'sawtooth', 0.12, 0.12);
@@ -364,6 +387,58 @@ const AudioFX = {
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
+
+// Dialogue & UI element references
+const dialogueOverlay = document.getElementById('dialogue-overlay');
+const dialogueNameEl = document.getElementById('dialogue-name');
+const dialogueTextEl = document.getElementById('dialogue-text');
+const dialoguePromptEl = document.getElementById('dialogue-prompt');
+const soundToggleBtn = document.getElementById('sound-toggle');
+
+// Dialogue State Management
+let isDialogueOpen = false;
+let dialogueQueue = [];
+let onDialogueComplete = null;
+
+function triggerDialogue(speaker, messages, callback = null) {
+  if (!dialogueOverlay) return;
+  isDialogueOpen = true;
+  dialogueQueue = [...messages];
+  onDialogueComplete = callback;
+  if (dialogueNameEl) dialogueNameEl.textContent = speaker;
+  dialogueOverlay.style.display = 'block';
+  showNextDialogueLine();
+}
+
+function showNextDialogueLine() {
+  if (dialogueQueue.length === 0) {
+    closeDialogue();
+    return;
+  }
+  const current = dialogueQueue.shift();
+  if (dialogueTextEl) dialogueTextEl.textContent = current.text;
+  if (dialoguePromptEl) dialoguePromptEl.textContent = current.prompt || "[PRESS A]";
+  AudioFX.chirp();
+}
+
+function advanceDialogue() {
+  if (!isDialogueOpen) return;
+  if (dialogueQueue.length > 0) {
+    showNextDialogueLine();
+  } else {
+    closeDialogue();
+  }
+}
+
+function closeDialogue() {
+  isDialogueOpen = false;
+  if (dialogueOverlay) dialogueOverlay.style.display = 'none';
+  if (onDialogueComplete) {
+    const cb = onDialogueComplete;
+    onDialogueComplete = null;
+    cb();
+  }
+}
 
 // 16x16 pixel grid per tile. Screen is 240x240 (15x15 tiles)
 const TILE_SIZE = 16;
@@ -422,15 +497,16 @@ const elephants = [
   }
 ];
 
-// Sunflower petals to collect
+// Readily accessible Golden Sunflower Petals
 const collectiblePetals = [
-  { x: 2 * TILE_SIZE + 4, y: 3 * TILE_SIZE + 4, collected: false },
-  { x: 12 * TILE_SIZE + 4, y: 11 * TILE_SIZE + 4, collected: false },
-  { x: 6 * TILE_SIZE + 4, y: 7 * TILE_SIZE + 4, collected: false }
+  { x: 2 * TILE_SIZE + 4, y: 3 * TILE_SIZE + 4, collected: false, id: 1 },
+  { x: 12 * TILE_SIZE + 4, y: 11 * TILE_SIZE + 4, collected: false, id: 2 },
+  { x: 6 * TILE_SIZE + 4, y: 7 * TILE_SIZE + 4, collected: false, id: 3 }
 ];
 
-// Particle system for glowing hearts and petals
+// Particle and popup message system
 let particles = [];
+let floatingPopups = [];
 let celebrationMode = false;
 
 function spawnHeartParticles(x, y) {
@@ -447,83 +523,29 @@ function spawnHeartParticles(x, y) {
   }
 }
 
-const dialogueOverlay = document.getElementById('dialogue-overlay');
-const dialogueNameEl = document.getElementById('dialogue-name');
-const dialogueTextEl = document.getElementById('dialogue-text');
-const dialoguePromptEl = document.getElementById('dialogue-prompt');
-
-let isDialogueOpen = false;
-let dialogueQueue = [];
-let currentDialogueIdx = 0;
-let typingInterval = null;
-let currentTextDisplayed = "";
-let targetFullText = "";
-let isTyping = false;
-let onDialogueCompleteCallback = null;
-
-function triggerDialogue(name, sequence, onFinish) {
-  dialogueQueue = sequence;
-  currentDialogueIdx = 0;
-  onDialogueCompleteCallback = onFinish;
-  dialogueNameEl.textContent = name;
-  dialogueOverlay.style.display = 'block';
-  isDialogueOpen = true;
-  showCurrentSlide();
-}
-
-function showCurrentSlide() {
-  if (currentDialogueIdx >= dialogueQueue.length) {
-    closeDialogue();
-    return;
+function spawnPetalPop(x, y) {
+  for (let i = 0; i < 14; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.8 + Math.random() * 1.4;
+    particles.push({
+      x: x + 6,
+      y: y + 6,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 0.5,
+      life: 35 + Math.random() * 20,
+      color: Math.random() > 0.3 ? '#ffe153' : '#fffa9e',
+      type: 'confetti'
+    });
   }
-  const item = dialogueQueue[currentDialogueIdx];
-  targetFullText = item.text;
-  currentTextDisplayed = "";
-  dialoguePromptEl.textContent = item.prompt || "[PRESS A]";
-  isTyping = true;
-  clearInterval(typingInterval);
-
-  let charIdx = 0;
-  typingInterval = setInterval(() => {
-    if (charIdx < targetFullText.length) {
-      currentTextDisplayed += targetFullText.charAt(charIdx);
-      dialogueTextEl.textContent = currentTextDisplayed;
-      if (charIdx % 3 === 0) AudioFX.chirp();
-      charIdx++;
-    } else {
-      isTyping = false;
-      clearInterval(typingInterval);
-    }
-  }, 28);
+  // Floating text notification
+  floatingPopups.push({
+    x: x - 12,
+    y: y - 4,
+    text: "+1 PETAL! 🌻",
+    life: 55,
+    vy: -0.6
+  });
 }
-
-function advanceDialogue() {
-  if (!isDialogueOpen) return;
-  if (isTyping) {
-    // Instant complete current line
-    clearInterval(typingInterval);
-    dialogueTextEl.textContent = targetFullText;
-    isTyping = false;
-  } else {
-    currentDialogueIdx++;
-    if (currentDialogueIdx < dialogueQueue.length) {
-      showCurrentSlide();
-    } else {
-      closeDialogue();
-    }
-  }
-}
-
-function closeDialogue() {
-  isDialogueOpen = false;
-  dialogueOverlay.style.display = 'none';
-  if (onDialogueCompleteCallback) {
-    const cb = onDialogueCompleteCallback;
-    onDialogueCompleteCallback = null;
-    cb();
-  }
-}
-
 // Draws a tiny 8-bit sunflower
 function drawPixelSunflower(cx, cy, scale = 1) {
   ctx.fillStyle = "#2d702d";
@@ -561,11 +583,11 @@ function drawPixelElephant(el) {
   if (el.dir > 0) {
     ctx.fillRect(x + 20, y + 8, 3, 4);
     ctx.fillRect(x + 22, y + 11, 2, 4);
-    ctx.fillRect(x + 23, y + 14, 2, 2); // curl
+    ctx.fillRect(x + 23, y + 14, 2, 2);
   } else {
     ctx.fillRect(x + 1, y + 8, 3, 4);
     ctx.fillRect(x - 1, y + 11, 2, 4);
-    ctx.fillRect(x - 2, y + 14, 2, 2); // curl
+    ctx.fillRect(x - 2, y + 14, 2, 2);
   }
 
   // Ear with gentle sway animation
@@ -676,7 +698,6 @@ function renderWorld() {
   ctx.fillRect(2 * TILE_SIZE + 9, 3 * TILE_SIZE + 2, 2, 2); // knob
 
   // 4. Scenic Corner Bench & Giant SunTree (Top Right)
-  // Wooden Bench
   ctx.fillStyle = "#8a5127";
   ctx.fillRect(11 * TILE_SIZE + 4, 2 * TILE_SIZE + 6, 20, 8);
   ctx.fillStyle = "#5c3314";
@@ -696,7 +717,7 @@ function renderWorld() {
   ctx.fill();
   drawPixelSunflower(tx - 2, ty + 2, 1.4);
 
-  // 5. Sunflowers scattered around borders and paths
+  // 5. Decorative background sunflowers
   const sunflowerLocations = [
     [0, 5], [0, 6], [1, 7], [1, 9], [0, 11], [1, 13],
     [5, 4], [5, 10], [5, 12],
@@ -707,16 +728,42 @@ function renderWorld() {
     drawPixelSunflower(col * TILE_SIZE + 2, row * TILE_SIZE + 2);
   });
 
-  // 6. Draw Collectible Petals (if not yet found)
+  // 6. Draw Highly-Visible Golden Petals
+  const now = Date.now();
   collectiblePetals.forEach((petal, idx) => {
     if (!petal.collected) {
-      const bob = Math.sin(Date.now() * 0.006 + idx) * 2;
-      ctx.fillStyle = "#ffe24a";
+      const bob = Math.sin(now * 0.007 + idx * 2) * 3;
+      const pulse = (Math.sin(now * 0.01 + idx) + 1) * 0.5;
+
+      // Outer golden halo
+      ctx.fillStyle = `rgba(255, 230, 80, ${0.25 + pulse * 0.35})`;
       ctx.beginPath();
-      ctx.arc(petal.x + 4, petal.y + 4 + bob, 4, 0, Math.PI * 2);
+      ctx.arc(petal.x + 6, petal.y + 6 + bob, 9 + pulse * 3, 0, Math.PI * 2);
       ctx.fill();
+
+      // Shadow below petal
+      ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+      ctx.beginPath();
+      ctx.ellipse(petal.x + 6, petal.y + 13, 6, 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Golden Petal core
+      ctx.fillStyle = "#ffb703";
+      ctx.beginPath();
+      ctx.ellipse(petal.x + 6, petal.y + 6 + bob, 5, 7, (now * 0.002 + idx), 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner warm highlight
+      ctx.fillStyle = "#fff37a";
+      ctx.beginPath();
+      ctx.arc(petal.x + 5, petal.y + 4 + bob, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sparkle cross
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(petal.x + 3, petal.y + 2 + bob, 2, 2);
+      ctx.fillRect(petal.x + 5, petal.y + 1 + bob, 2, 1);
+      ctx.fillRect(petal.x + 4, petal.y + 2 + bob, 4, 1);
+      ctx.fillRect(petal.x + 5, petal.y + 3 + bob, 2, 1);
     }
   });
 
@@ -749,7 +796,22 @@ function renderWorld() {
     if (p.life <= 0) particles.splice(i, 1);
   }
 
-  // Continuous celebratory petal snowfall
+  // 11. Render floating "+1 PETAL!" popups
+  for (let i = floatingPopups.length - 1; i >= 0; i--) {
+    const pop = floatingPopups[i];
+    pop.y += pop.vy;
+    pop.life--;
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.font = "6px 'Press Start 2P', monospace";
+    ctx.fillText(pop.text, pop.x + 1, pop.y + 1);
+    ctx.fillStyle = "#ffe24a";
+    ctx.fillText(pop.text, pop.x, pop.y);
+
+    if (pop.life <= 0) floatingPopups.splice(i, 1);
+  }
+
+  // Celebratory snowfall after dialogue
   if (celebrationMode && Math.random() < 0.3) {
     particles.push({
       x: Math.random() * canvas.width,
@@ -762,18 +824,54 @@ function renderWorld() {
     });
   }
 
-  // Quest Tracker HUD in top screen
-  ctx.fillStyle = "rgba(18, 25, 38, 0.75)";
-  ctx.fillRect(4, 4, 98, 14);
-  ctx.fillStyle = "#ffde59";
+  // HUD: Petal counter & quest prompt
+  ctx.fillStyle = "rgba(18, 25, 38, 0.85)";
+  ctx.fillRect(4, 4, 134, 16);
+  ctx.strokeStyle = "#475a7c";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(4, 4, 134, 16);
+
+  ctx.fillStyle = player.petalsFound === 3 ? "#7de87d" : "#ffde59";
   ctx.font = "6px 'Press Start 2P', monospace";
-  ctx.fillText(`🌻 PETALS: ${player.petalsFound}/3`, 8, 14);
+  if (player.petalsFound < 3) {
+    ctx.fillText(`🌻 PETALS: ${player.petalsFound}/3`, 8, 15);
+  } else {
+    ctx.fillText(`🌻 ALL 3 FOUND!`, 8, 15);
+  }
+}
+function checkProximity(a, b, dist = 22) {
+  const ax = a.x + a.w / 2;
+  const ay = a.y + a.h / 2;
+  const bx = b.x + (b.w ? b.w / 2 : 6);
+  const by = b.y + (b.h ? b.h / 2 : 6);
+  return Math.hypot(ax - bx, ay - by) < dist;
 }
 
-function checkProximity(a, b, dist = 22) {
-  const dx = (a.x + a.w / 2) - (b.x + (b.w ? b.w / 2 : 4));
-  const dy = (a.y + a.h / 2) - (b.y + (b.h ? b.h / 2 : 4));
-  return Math.hypot(dx, dy) < dist;
+// Automatically check and pick up petals without blocking player walk
+function checkAutomaticPetalPickup() {
+  for (let i = 0; i < collectiblePetals.length; i++) {
+    const petal = collectiblePetals[i];
+    if (!petal.collected && checkProximity(player, petal, 22)) {
+      petal.collected = true;
+      player.petalsFound++;
+      AudioFX.petalPickup();
+      spawnPetalPop(petal.x, petal.y);
+
+      // If all petals found, hint towards friend's corner
+      if (player.petalsFound === 3) {
+        setTimeout(() => {
+          if (!isDialogueOpen) {
+            triggerDialogue("Sunflower Field", [
+              {
+                text: `You gathered all 3 golden petals! 🌻✨\nVisit your friend waiting at the quiet corner bench.`,
+                prompt: "[PRESS A]"
+              }
+            ]);
+          }
+        }, 300);
+      }
+    }
+  }
 }
 
 function handleInteractions() {
@@ -782,28 +880,9 @@ function handleInteractions() {
     return;
   }
 
-  // 1. Check Petal Collections
-  for (let i = 0; i < collectiblePetals.length; i++) {
-    const petal = collectiblePetals[i];
-    if (!petal.collected && checkProximity(player, petal, 16)) {
-      petal.collected = true;
-      player.petalsFound++;
-      AudioFX.petalPickup();
-      spawnHeartParticles(petal.x, petal.y);
-
-      triggerDialogue("Discovery", [
-        {
-          text: `You found a glowing golden petal! (${player.petalsFound}/3)\nA soothing sunflower warmth fills you.`,
-          prompt: "[PRESS A TO CONTINUE]"
-        }
-      ]);
-      return;
-    }
-  }
-
-  // 2. Check Sunflower Elephants
+  // 1. Sunflower Elephants Interaction
   for (let el of elephants) {
-    if (checkProximity(player, el, 26)) {
+    if (checkProximity(player, el, 28)) {
       AudioFX.elephantTrumpet();
       spawnHeartParticles(el.x + 8, el.y);
       triggerDialogue(el.name + " the Elephant", [
@@ -820,13 +899,12 @@ function handleInteractions() {
     }
   }
 
-  // 3. Check Friend at the Scenic Corner
-  if (checkProximity(player, friend, 24)) {
+  // 2. Friend at the Scenic Corner Bench
+  if (checkProximity(player, friend, 26)) {
     AudioFX.lullaby();
     spawnHeartParticles(friend.x, friend.y);
 
     if (celebrationMode) {
-      // Re-trigger the promise whenever spoken to
       triggerDialogue("Friend", [
         {
           text: `“I'll be there at a corner until u sort your things thats the promise I made and i will keep”`,
@@ -840,7 +918,7 @@ function handleInteractions() {
       return;
     }
 
-    triggerDialogue("Friend", [
+    const dialogueSeq = [
       {
         text: `Hey! You made it all the way to our favorite sunflower corner.`,
         prompt: "[PRESS A]"
@@ -857,8 +935,9 @@ function handleInteractions() {
         text: `No matter how big the world gets, this corner is yours whenever you need it. 🌻✨`,
         prompt: "[PRESS A]"
       }
-    ], () => {
-      // On Dialogue complete
+    ];
+
+    triggerDialogue("Friend", dialogueSeq, () => {
       celebrationMode = true;
       AudioFX.lullaby();
       for (let i = 0; i < 30; i++) {
@@ -868,7 +947,17 @@ function handleInteractions() {
     return;
   }
 
-  // Casual exploration prompt if nothing nearby
+  // Check if player pressed action near a petal manually
+  for (let petal of collectiblePetals) {
+    if (!petal.collected && checkProximity(player, petal, 24)) {
+      petal.collected = true;
+      player.petalsFound++;
+      AudioFX.petalPickup();
+      spawnPetalPop(petal.x, petal.y);
+      return;
+    }
+  }
+
   AudioFX.chirp();
 }
 
@@ -891,7 +980,6 @@ function updateGame() {
       }
     }
 
-    // New proposed positions with world boundaries
     const nextX = Math.max(8, Math.min(canvas.width - player.w - 8, player.x + dx));
     const nextY = Math.max(8, Math.min(canvas.height - player.h - 8, player.y + dy));
 
@@ -901,37 +989,22 @@ function updateGame() {
       player.x = nextX;
       player.y = nextY;
     }
+
+    // Automatically check petal pickups as player walks over them
+    checkAutomaticPetalPickup();
   }
 
   renderWorld();
   requestAnimationFrame(updateGame);
 }
-
-window.addEventListener('keydown', (e) => {
-  AudioFX.init();
-  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.up = true;
-  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.down = true;
-  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
-  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
-  if (e.key === ' ' || e.key === 'Enter' || e.key === 'z' || e.key === 'Z') {
-    handleInteractions();
-  }
-});
-
-window.addEventListener('keyup', (e) => {
-  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.up = false;
-  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.down = false;
-  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
-  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
-});
-
-// Touch and Click Handlers for Screen Buttons
+// Multi-touch friendly listeners
 function bindTouchButton(elementId, onPress, onRelease) {
   const el = document.getElementById(elementId);
   if (!el) return;
 
   const startPress = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     AudioFX.init();
     el.classList.add('active');
     if (onPress) onPress();
@@ -939,12 +1012,14 @@ function bindTouchButton(elementId, onPress, onRelease) {
 
   const endPress = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     el.classList.remove('active');
     if (onRelease) onRelease();
   };
 
   el.addEventListener('touchstart', startPress, { passive: false });
   el.addEventListener('touchend', endPress, { passive: false });
+  el.addEventListener('touchcancel', endPress, { passive: false });
   el.addEventListener('mousedown', startPress);
   el.addEventListener('mouseup', endPress);
   el.addEventListener('mouseleave', endPress);
@@ -956,19 +1031,43 @@ bindTouchButton('d-left', () => keys.left = true, () => keys.left = false);
 bindTouchButton('d-right', () => keys.right = true, () => keys.right = false);
 bindTouchButton('btn-a', () => handleInteractions(), null);
 
-// Click anywhere on dialogue box to advance
-dialogueOverlay.addEventListener('click', () => {
-  handleInteractions();
+// Keyboard Controls (WASD & Arrow Keys + Space/Enter)
+window.addEventListener('keydown', (e) => {
+  AudioFX.init();
+  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.up = true;
+  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.down = true;
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+  if (e.key === ' ' || e.key === 'Enter' || e.key === 'e' || e.key === 'E') {
+    handleInteractions();
+  }
 });
 
-// Sound Toggle Button
-const soundToggleBtn = document.getElementById('sound-toggle');
-soundToggleBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  AudioFX.enabled = !AudioFX.enabled;
-  soundToggleBtn.textContent = AudioFX.enabled ? "🎵 AUDIO: ON" : "🔇 AUDIO: OFF";
-  if (AudioFX.enabled) AudioFX.chirp();
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.up = false;
+  if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.down = false;
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
 });
+
+// Sound Toggle Listener
+if (soundToggleBtn) {
+  soundToggleBtn.addEventListener('click', () => {
+    AudioFX.enabled = !AudioFX.enabled;
+    soundToggleBtn.textContent = AudioFX.enabled ? "🎵 AUDIO: ON" : "🔇 AUDIO: OFF";
+  });
+}
+
+if (dialogueOverlay) {
+  dialogueOverlay.addEventListener('click', (e) => {
+    e.preventDefault();
+    handleInteractions();
+  });
+  dialogueOverlay.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    handleInteractions();
+  }, { passive: false });
+}
 
 window.onload = function() {
   updateGame();
@@ -977,11 +1076,11 @@ window.onload = function() {
   setTimeout(() => {
     triggerDialogue("Guide", [
       {
-        text: `Welcome to Sunflower Corner. 🌻\nUse the D-Pad to explore the meadow and meet the gentle elephants.`,
+        text: `Welcome to Sunflower Corner. 🌻\nWalk over the golden glowing petals to collect them!`,
         prompt: "[PRESS A]"
       },
       {
-        text: `When you're ready, visit the quiet corner under the golden sun tree.`,
+        text: `Meet the sunflower elephants and find your friend under the golden sun tree.`,
         prompt: "[PRESS A TO START]"
       }
     ]);
